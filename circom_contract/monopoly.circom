@@ -1,35 +1,27 @@
 pragma circom 2.0.0;
 
+include "circomlib-master/circuits/comparators.circom";  // Automatically includes the comparators template from node_modules
+
 template SufficientFunds() {
     signal input funds; // Private input: player's total funds in wei
-    signal output isSufficient; // Output: 1 if funds >= 1000 SMONO, 0 otherwise
+    signal input nextRequiredSMONO; // Private input: current required SMONO in wei 
+    signal input xmonoPoints; // Private input: player's current XMONO-Points
+    signal output isSufficient; // Output: 1 if funds >= nextRequiredSMONO, 0 otherwise
 
-    // Define the threshold: 1000 SMONO in wei
-    var SMONO_THRESHOLD = 1000000000000000000000; // 1000 SMONO = 10^18 * 1000 wei
+    // Define base SMONO unit: 1 SMONO = 10^18 wei
+    var SMONO_UNIT = 1000000000000000000; // 10^18
+    var BASE_THRESHOLD = 1000; // Initial threshold in SMONO units (1000 SMONO)
 
-    // Compute difference
-    signal diff;
-    diff <== funds - SMONO_THRESHOLD;
+    // Verify nextRequiredSMONO matches expected formula: 1000 + 1000 * xmonoPoints (in SMONO units)
+    signal expectedThreshold;
+    expectedThreshold <== (BASE_THRESHOLD + xmonoPoints * 1000) * SMONO_UNIT;
+    nextRequiredSMONO === expectedThreshold; // Constraint: ensure input threshold is correct
 
-    // Use NonNegative template to check if diff >= 0
-    component nonNegativeCheck = NonNegative(256); // Use 256 bits for sufficient range
-    nonNegativeCheck.in <== diff;
-    isSufficient <== nonNegativeCheck.out;
+    // Use Circomlib's GreaterEqThan with 252 bits
+    component geq = GreaterEqThan(252); // Changed from 256 to 252
+    geq.in[0] <== funds;
+    geq.in[1] <== nextRequiredSMONO;
+    isSufficient <== geq.out;
 }
 
-template NonNegative(n) {
-    signal input in;
-    signal output out;
-    
-    signal bits[n];
-    var sum = 0;
-    for (var i = 0; i < n; i++) {
-        bits[i] <-- (in >> i) & 1;
-        bits[i] * (1 - bits[i]) === 0; // Constraint: bits[i] is 0 or 1
-        sum += bits[i] * (2 ** i);
-    }
-    sum === in; // Constraint: sum of bits reconstructs input
-    out <== 1 - bits[n-1]; // If in >= 0, most significant bit is 0, so out = 1
-}
-
-component main = SufficientFunds();
+component main { public [nextRequiredSMONO, xmonoPoints] } = SufficientFunds();
