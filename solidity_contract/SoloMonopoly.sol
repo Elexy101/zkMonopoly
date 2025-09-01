@@ -9,15 +9,12 @@ contract SoloMonopoly {
 
     mapping(address => uint256) public balanceOf;
     mapping(address => Player) public players;
-    mapping(address => uint256) public xmonoPoints;
-    mapping(address => uint256) public nextRequiredSMONO; // In SMONO units (e.g., 1000), without decimals
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event GameStarted(address player);
     event DiceRolled(address player, uint256 roll, uint256 newPosition);
     event ProfitLanded(address player, uint256 reward);
     event LossLanded(address player, uint256 penalty);
-    event ClaimedXmono(address player, uint256 points);
 
     uint256 private constant INITIAL_TOKENS = 500;
     uint256 private constant BOARD_SIZE = 16;
@@ -50,14 +47,12 @@ contract SoloMonopoly {
             boardInitialized = true;
         }
 
-        _mint(msg.sender, INITIAL_TOKENS * (10 ** decimals));
+        _mint(msg.sender, INITIAL_TOKENS * 1e18);
 
         players[msg.sender] = Player({
             position: 0,
             hasStarted: true
         });
-        nextRequiredSMONO[msg.sender] = 1000;
-
         emit GameStarted(msg.sender);
     }
 
@@ -72,32 +67,15 @@ contract SoloMonopoly {
         _handleLanding(msg.sender, player.position);
     }
 
-    function claimXmono() external {
-        Player storage player = players[msg.sender];
-        require(player.hasStarted, "Start game first");
-
-        uint256 required = nextRequiredSMONO[msg.sender] * (10 ** decimals);
-        require(balanceOf[msg.sender] >= required, "Insufficient SMONO");
-
-        balanceOf[msg.sender] -= required;
-        totalSupply -= required;
-        emit Transfer(msg.sender, address(0), required);
-
-        xmonoPoints[msg.sender] += 1;
-        emit ClaimedXmono(msg.sender, xmonoPoints[msg.sender]);
-
-        nextRequiredSMONO[msg.sender] += 1000;
-    }
-
     function _handleLanding(address playerAddr, uint8 position) internal {
         Tile memory tile = board[position];
 
         if (tile.tileType == TileType.PROFIT) {
-            uint256 reward = uint256(uint32(tile.value)) * (10 ** decimals);
+            uint256 reward = uint256(uint32(tile.value)) * 1e18;
             _mint(playerAddr, reward);
             emit ProfitLanded(playerAddr, reward);
         } else if (tile.tileType == TileType.LOSS) {
-            uint256 penalty = uint256(uint32(-tile.value)) * (10 ** decimals);
+            uint256 penalty = uint256(uint32(-tile.value)) * 1e18;
             if (balanceOf[playerAddr] >= penalty) {
                 balanceOf[playerAddr] -= penalty;
                 totalSupply -= penalty;
