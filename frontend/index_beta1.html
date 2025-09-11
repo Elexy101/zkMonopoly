@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>zkMonopoly Claim</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb2d);
+            color: white;
+            padding: 20px;
+        }
+        .container {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 {
+            margin-top: 0;
+            font-size: 2.5rem;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            color: #4CAF50;
+        }
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 15px 0;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        #status {
+            margin-top: 20px;
+            font-size: 1.1rem;
+            padding: 15px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            text-align: left;
+        }
+        .success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .loading {
+            color: #2196F3;
+        }
+        .info-panel {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            text-align: left;
+        }
+        .info-panel h3 {
+            margin-top: 0;
+            color: #4CAF50;
+        }
+        .progress-bar {
+            height: 10px;
+            width: 100%;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 5px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        .progress {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+        .gas-info {
+            background: rgba(255, 215, 0, 0.2);
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border-left: 4px solid gold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🎲</div>
+        <h1>zkMonopoly Claim</h1>
+        
+        <div class="info-panel">
+            <h3>How it works:</h3>
+            <p>1. Connect your wallet to Sepolia Testnet</p>
+            <p>2. Generate a zero-knowledge proof for your attestation</p>
+            <p>3. Approve the transaction in MetaMask to verify the proof and claim your Xmono tokens</p>
+            <p><strong>Note:</strong> Ensure you have at least 0.01 Sepolia ETH for gas fees. High gas is normal for ZK proof verification.</p>
+        </div>
+        
+        <div class="gas-info">
+            <strong>Gas Notice:</strong> This transaction requires significant gas due to zero-knowledge proof verification. Please ensure you have at least 0.01 Sepolia ETH in your wallet and approve the transaction in MetaMask. Gas fees may appear high but are necessary for secure processing.
+        </div>
+        
+        <button id="testCircuitButton" onclick="testCircuit()">Test ZK Circuit Off-Chain</button>
+        <button id="claimButton" onclick="verifyAndClaim()">Verify and Claim Xmono</button>
+        
+        <div class="progress-bar">
+            <div class="progress" id="progressBar"></div>
+        </div>
+        
+        <div id="status">Status: Ready to connect</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+    <script src="https://unpkg.com/snarkjs@0.7.0/build/snarkjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script>
+        // Sepolia Testnet configuration
+        const SEPOLIA_TESTNET = {
+            chainId: "0xaa36a7",
+            chainName: "Sepolia Testnet",
+            nativeCurrency: {
+                name: "Sepolia ETH",
+                symbol: "ETH",
+                decimals: 18
+            },
+            rpcUrls: ["https://rpc.sepolia.org"],
+            blockExplorerUrls: ["https://sepolia.etherscan.io"]
+        };
+
+        const CONTRACT_ADDRESS = "0x62090559B7f7b36D17f2412867d7C90Cb2832CE8";
+
+        // Update progress bar
+        function updateProgress(percent) {
+            document.getElementById('progressBar').style.width = percent + '%';
+        }
+
+        // Update status message
+        function updateStatus(message, type = '') {
+            const statusElement = document.getElementById('status');
+            statusElement.innerHTML = message;
+            statusElement.className = type;
+        }
+
+        async function switchToSepolia() {
+            try {
+                await window.ethereum.request({
+                    method: "wallet_switchEthereumChain",
+                    params: [{ chainId: SEPOLIA_TESTNET.chainId }],
+                });
+                return true;
+            } catch (switchError) {
+                if (switchError.code === 4902) {
+                    try {
+                        await window.ethereum.request({
+                            method: "wallet_addEthereumChain",
+                            params: [SEPOLIA_TESTNET],
+                        });
+                        return true;
+                    } catch (addError) {
+                        console.error("Error adding Sepolia network:", addError);
+                        return false;
+                    }
+                } else {
+                    console.error("Error switching to Sepolia:", switchError);
+                    return false;
+                }
+            }
+        }
+
+        // Function to get provider, signer, contract, and user data
+        async function getUserData() {
+            if (!window.ethereum) {
+                throw new Error('MetaMask is not installed! Please install MetaMask to use this dApp.');
+            }
+
+            const provider = new ethers.providers.Web3Provider(window.ethereum);
+            const network = await provider.getNetwork();
+            if (network.chainId !== parseInt(SEPOLIA_TESTNET.chainId, 16)) {
+                const switched = await switchToSepolia();
+                if (!switched) {
+                    throw new Error('Failed to switch to Sepolia Testnet. Please switch manually in MetaMask.');
+                }
+            }
+
+            await provider.send('eth_requestAccounts', []);
+            const signer = provider.getSigner();
+            const userAddress = await signer.getAddress();
+
+            const abi = [
+                {
+                    "inputs": [
+                        { "internalType": "address", "name": "_zkvContract", "type": "address" },
+                        { "internalType": "bytes32", "name": "_vkHash", "type": "bytes32" }
+                    ],
+                    "stateMutability": "nonpayable",
+                    "type": "constructor"
+                },
+                {
+                    "anonymous": false,
+                    "inputs": [
+                        { "indexed": false, "internalType": "address", "name": "player", "type": "address" },
+                        { "indexed": false, "internalType": "uint256", "name": "points", "type": "uint256" }
+                    ],
+                    "name": "ClaimedXmono",
+                    "type": "event"
+                },
+                {
+                    "anonymous": false,
+                    "inputs": [
+                        { "indexed": false, "internalType": "address", "name": "player", "type": "address" },
+                        { "indexed": false, "internalType": "uint256", "name": "roll", "type": "uint256" },
+                        { "indexed": false, "internalType": "uint256", "name": "newPosition", "type": "uint256" }
+                    ],
+                    "name": "DiceRolled",
+                    "type": "event"
+                },
+                {
+                    "anonymous": false,
+                    "inputs": [
+                        { "indexed": false, "internalType": "address", "name": "player", "type": "address" }
+                    ],
+                    "name": "GameStarted",
+                    "type": "event"
+                },
+                {
+                    "anonymous": false,
+                    "inputs": [
+                        { "indexed": false, "internalType": "address", "name": "player", "type": "address" },
+                        { "indexed": false, "internalType": "uint256", "name": "penalty", "type": "uint256" }
+                    ],
+                    "name": "LossLanded",
+                    "type": "event"
+                },
+                {
+                    "anonymous": false,
+                    "inputs": [
+                        { "indexed": false, "internalType": "address", "name": "player", "type": "address" },
+                        { "indexed": false, "internalType": "uint256", "name": "reward", "type": "uint256" }
+                    ],
+                    "name": "ProfitLanded",
+                    "type": "event"
+                },
+                {
+                    "anonymous": false,
+                    "inputs": [
+                        { "indexed": true, "internalType": "address", "name": "from", "type": "address" },
+                        { "indexed": true, "internalType": "address", "name": "to", "type": "address" },
+                        { "indexed": false, "internalType": "uint256", "name": "value", "type": "uint256" }
+                    ],
+                    "name": "Transfer",
+                    "type": "event"
+                },
+                {
+                    "inputs": [],
+                    "name": "PROVING_SYSTEM_ID",
+                    "outputs": [{ "internalType": "bytes32", "name": "", "type": "bytes32" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [{ "internalType": "address", "name": "", "type": "address" }],
+                    "name": "balanceOf",
+                    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [{ "internalType": "address", "name": "player", "type": "address" }],
+                    "name": "getPlayerPosition",
+                    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [{ "internalType": "uint256", "name": "position", "type": "uint256" }],
+                    "name": "getTile",
+                    "outputs": [
+                        { "internalType": "string", "name": "", "type": "string" },
+                        { "internalType": "enum SoloMonopoly.TileType", "name": "", "type": "uint8" },
+                        { "internalType": "int256", "name": "", "type": "int256" }
+                    ],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [],
+                    "name": "name",
+                    "outputs": [{ "internalType": "string", "name": "", "type": "string" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [{ "internalType": "address", "name": "", "type": "address" }],
+                    "name": "nextRequiredSMONO",
+                    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [{ "internalType": "address", "name": "", "type": "address" }],
+                    "name": "players",
+                    "outputs": [
+                        { "internalType": "uint8", "name": "position", "type": "uint8" },
+                        { "internalType": "bool", "name": "hasStarted", "type": "bool" }
+                    ],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [],
+                    "name": "rollDice",
+                    "outputs": [],
+                    "stateMutability": "nonpayable",
+                    "type": "function"
+                },
+                {
+                    "inputs": [],
+                    "name": "startGame",
+                    "outputs": [],
+                    "stateMutability": "nonpayable",
+                    "type": "function"
+                },
+                {
+                    "inputs": [],
+                    "name": "symbol",
+                    "outputs": [{ "internalType": "string", "name": "", "type": "string" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [],
+                    "name": "totalSupply",
+                    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [
+                        { "internalType": "uint256", "name": "attestationId", "type": "uint256" },
+                        { "internalType": "bytes32[]", "name": "merklePath", "type": "bytes32[]" },
+                        { "internalType": "uint256", "name": "leafCount", "type": "uint256" },
+                        { "internalType": "uint256", "name": "index", "type": "uint256" },
+                        { "internalType": "uint256[3]", "name": "input", "type": "uint256[3]" }
+                    ],
+                    "name": "verifyAndClaimXmono",
+                    "outputs": [],
+                    "stateMutability": "nonpayable",
+                    "type": "function"
+                },
+                {
+                    "inputs": [],
+                    "name": "vkHash",
+                    "outputs": [{ "internalType": "bytes32", "name": "", "type": "bytes32" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [{ "internalType": "address", "name": "", "type": "address" }],
+                    "name": "xmonoPoints",
+                    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "inputs": [],
+                    "name": "zkvContract",
+                    "outputs": [{ "internalType": "address", "name": "", "type": "address" }],
+                    "stateMutability": "view",
+                    "type": "function"
+                }
+            ];
+
+            const contract = new ethers.Contract(CONTRACT_ADDRESS, abi, signer);
+
+            const playerData = await contract.players(userAddress);
+            if (!playerData.hasStarted) {
+                const startTx = await contract.startGame({ gasLimit: 200000 });
+                await startTx.wait();
+            }
+
+            const balance = await contract.balanceOf(userAddress);
+            const nextRequiredSMONO = await contract.nextRequiredSMONO(userAddress);
+            const xmonoPoints = await contract.xmonoPoints(userAddress);
+
+            if (balance.lt(nextRequiredSMONO)) {
+                throw new Error(`Insufficient SMONO tokens. You have ${ethers.utils.formatUnits(balance, 18)} but need ${ethers.utils.formatUnits(nextRequiredSMONO, 18)}`);
+            }
+
+            return { provider, signer, contract, userAddress, balance, nextRequiredSMONO, xmonoPoints };
+        }
+
+        async function testCircuit() {
+            const button = document.getElementById('testCircuitButton');
+            button.disabled = true;
+            updateProgress(10);
+            updateStatus('Status: Starting off-chain circuit test...', 'loading');
+
+            try {
+                const { userAddress, balance, nextRequiredSMONO, xmonoPoints } = await getUserData();
+                updateProgress(30);
+                updateStatus(`Status: Fetched data from contract.<br>Balance: ${ethers.utils.formatUnits(balance, 18)} SMONO<br>Required: ${ethers.utils.formatUnits(nextRequiredSMONO, 18)} SMONO<br>Points: ${xmonoPoints.toString()}`, '');
+
+                // Verify nextRequiredSMONO matches circuit formula: 1000 + xmonoPoints * 1000
+                const expectedThreshold = 1000 + xmonoPoints * 1000;
+                if (nextRequiredSMONO.toString() !== expectedThreshold.toString()) {
+                    throw new Error(`Invalid nextRequiredSMONO: expected ${expectedThreshold}, got ${nextRequiredSMONO}`);
+                }
+
+                // ZK Proof inputs matching circuit
+                const proofInputs = {
+                    funds: balance.toString(),
+                    nextRequiredSMONO: nextRequiredSMONO.toString(),
+                    xmonoPoints: xmonoPoints.toString()
+                };
+
+                // Log inputs for debugging
+                console.log('Proof inputs:', proofInputs);
+
+                // Generate ZK Proof
+                updateProgress(50);
+                updateStatus('Status: Generating test ZK proof with contract inputs...', 'loading');
+                
+                const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+                    proofInputs,
+                    './monopoly_js/monopoly.wasm',
+                    './monopoly_0001.zkey'
+                );
+
+                updateProgress(70);
+                updateStatus('Status: ZK proof generated successfully!', 'success');
+
+                // Log public signals for debugging
+                console.log('Public signals:', publicSignals);
+
+                // Verify public signals: [isSufficient, nextRequiredSMONO, xmonoPoints]
+                const expectedSignals = [
+                    balance.gte(nextRequiredSMONO) ? "1" : "0",
+                    nextRequiredSMONO.toString(),
+                    xmonoPoints.toString()
+                ];
+                if (publicSignals.join(',') !== expectedSignals.join(',')) {
+                    throw new Error(`Invalid public signals: expected ${expectedSignals}, got ${publicSignals}`);
+                }
+
+                // Load and verify proof off-chain
+                updateProgress(80);
+                updateStatus('Status: Verifying proof off-chain with verification key...', 'loading');
+                
+                const vkResponse = await axios.get('./verification_key.json');
+                const vk = vkResponse.data;
+                const isValidProof = await snarkjs.groth16.verify(vk, publicSignals, proof);
+                if (!isValidProof) {
+                    throw new Error('Off-chain verification failed. Check if wasm, zkey, and verification_key.json are compatible.');
+                }
+                updateStatus('Status: Off-chain verification succeeded! Circuit files are valid with contract inputs.', 'success');
+
+                updateProgress(100);
+
+            } catch (error) {
+                console.error('Test error details:', error);
+                updateStatus('Status: Circuit test failed - ' + (error.message || 'Unknown error occurred. Check console for details.'), 'error');
+                updateProgress(0);
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        async function verifyAndClaim() {
+            const button = document.getElementById('claimButton');
+            button.disabled = true;
+            updateProgress(10);
+            updateStatus('Status: Checking network...', 'loading');
+
+            try {
+                const { provider, signer, contract, userAddress, balance, nextRequiredSMONO, xmonoPoints } = await getUserData();
+
+                updateProgress(30);
+                updateStatus(`Status: Wallet connected!<br>Address: ${userAddress.substring(0, 6)}...${userAddress.substring(38)}`, '');
+
+                // Check ETH balance
+                const ethBalance = await provider.getBalance(userAddress);
+                if (ethBalance.lt(ethers.utils.parseEther('0.01'))) {
+                    throw new Error('Insufficient Sepolia ETH for gas fees. Please add at least 0.01 ETH using a faucet like https://sepoliafaucet.com.');
+                }
+
+                updateProgress(50);
+                updateStatus(`Status: Player data retrieved!<br>Balance: ${ethers.utils.formatUnits(balance, 18)} SMONO<br>Required: ${ethers.utils.formatUnits(nextRequiredSMONO, 18)} SMONO<br>Points: ${xmonoPoints.toString()}`, '');
+
+                // Verify nextRequiredSMONO matches circuit formula: 1000 + xmonoPoints * 1000
+                const expectedThreshold = 1000 + xmonoPoints * 1000;
+                if (nextRequiredSMONO.toString() !== expectedThreshold.toString()) {
+                    throw new Error(`Invalid nextRequiredSMONO: expected ${expectedThreshold}, got ${nextRequiredSMONO}`);
+                }
+
+                // Attestation data from aggregate.json
+                const attestationId = "92126";
+                const merklePath = [
+                    "0x905ea1c2e2573071c5825da7216964bbec16d73d75da97f5ae1bb7be4bd4d3ac",
+                    "0xfd55d2a5958aade4bc2cd5ceec140e9d044bc082280b4e54723b4e99ce030434",
+                    "0x61a4758294f91db6a7430085f61734e9876f5f710b840979a760b75182669914"
+                ];
+                const leafCount = "8";
+                const index = "0";
+
+                // ZK Proof inputs matching circuit
+                const proofInputs = {
+                    funds: balance.toString(),
+                    nextRequiredSMONO: nextRequiredSMONO.toString(),
+                    xmonoPoints: xmonoPoints.toString()
+                };
+
+                // Log inputs for debugging
+                console.log('Proof inputs:', proofInputs);
+
+                // Generate ZK Proof
+                updateProgress(60);
+                updateStatus('Status: Generating ZK proof (this may take a moment)...', 'loading');
+                
+                const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+                    proofInputs,
+                    './monopoly_js/monopoly.wasm',
+                    './monopoly_0001.zkey'
+                );
+
+                updateProgress(80);
+                updateStatus('Status: ZK proof generated!', '');
+
+                // Log public signals for debugging
+                console.log('Public signals:', publicSignals);
+
+                // Format inputs for contract: [isSufficient, nextRequiredSMONO, xmonoPoints]
+                const input = publicSignals.map(x => x.toString());
+
+                // Verify input structure
+                if (input.length !== 3) {
+                    throw new Error(`Invalid input format: Expected 3 elements, got ${input.length}`);
+                }
+
+                // Verify public signals
+                const expectedSignals = [
+                    balance.gte(nextRequiredSMONO) ? "1" : "0",
+                    nextRequiredSMONO.toString(),
+                    xmonoPoints.toString()
+                ];
+                if (input.join(',') !== expectedSignals.join(',')) {
+                    throw new Error(`Invalid public signals: expected ${expectedSignals}, got ${input}`);
+                }
+
+                // Log inputs for debugging
+                console.log('Contract inputs:', { attestationId, merklePath, leafCount, index, input });
+
+                // Verify Merkle proof
+                updateProgress(82);
+                updateStatus('Status: Verifying Merkle proof...', 'loading');
+                const zkvAddress = await contract.zkvContract();
+                console.log('zkvContract address:', zkvAddress);
+                const zkvAbi = ["function verifyProofAttestation(uint256,bytes32,bytes32[],uint256,uint256) view returns (bool)"];
+                const zkvContract = new ethers.Contract(zkvAddress, zkvAbi, provider);
+                const PROVING_SYSTEM_ID = await contract.PROVING_SYSTEM_ID();
+                const vkHash = await contract.vkHash();
+                console.log('PROVING_SYSTEM_ID:', PROVING_SYSTEM_ID);
+                console.log('vkHash:', vkHash);
+                
+                // Compute leaf as per contract, converting inputs to numbers
+                const inputEncoded = input.map(x => ethers.utils.hexZeroPad(ethers.utils.hexlify(Number(x)), 32));
+                console.log('Encoded inputs:', inputEncoded);
+                const leaf = ethers.utils.keccak256(
+                    ethers.utils.concat([
+                        ethers.utils.hexlify(PROVING_SYSTEM_ID),
+                        ethers.utils.hexlify(vkHash),
+                        ethers.utils.keccak256(ethers.utils.concat(inputEncoded))
+                    ])
+                );
+                console.log('Computed leaf:', leaf);
+                
+                try {
+                    const isValid = await zkvContract.verifyProofAttestation(
+                        attestationId,
+                        leaf,
+                        merklePath,
+                        leafCount,
+                        index
+                    );
+                    console.log('Merkle proof valid:', isValid);
+                    if (!isValid) {
+                        throw new Error('Merkle proof verification failed in zkvContract. Check attestationId, merklePath, leafCount, or index.');
+                    }
+                } catch (merkleError) {
+                    console.error('Merkle proof verification error:', merkleError);
+                    throw new Error(`Merkle proof verification failed: ${merkleError.message}`);
+                }
+
+                // Load and verify proof off-chain
+                updateProgress(85);
+                updateStatus('Status: Verifying proof off-chain...', 'loading');
+                
+                const vkResponse = await axios.get('./verification_key.json');
+                const vk = vkResponse.data;
+                const isValidProof = await snarkjs.groth16.verify(vk, publicSignals, proof);
+                if (!isValidProof) {
+                    throw new Error('Off-chain verification failed. Ensure the circuit files and inputs are correct.');
+                }
+                updateStatus('Status: Off-chain verification succeeded!', 'success');
+
+                // Static call to catch revert reasons
+                updateProgress(88);
+                updateStatus('Status: Performing static call to verify inputs...', 'loading');
+                try {
+                    await contract.callStatic.verifyAndClaimXmono(
+                        attestationId,
+                        merklePath,
+                        leafCount,
+                        index,
+                        input
+                    );
+                    console.log('Static call succeeded');
+                } catch (staticError) {
+                    console.error('Static call failed:', staticError);
+                    throw new Error(`Static call failed: ${staticError.reason || staticError.message}`);
+                }
+
+                // Estimate gas for the transaction
+                updateProgress(90);
+                updateStatus('Status: Estimating gas (please wait)...', 'loading');
+                
+                let gasLimit;
+                let gasAttempts = 0;
+                const maxGasAttempts = 2;
+                while (gasAttempts < maxGasAttempts) {
+                    try {
+                        gasLimit = await contract.estimateGas.verifyAndClaimXmono(
+                            attestationId,
+                            merklePath,
+                            leafCount,
+                            index,
+                            input
+                        );
+                        gasLimit = gasLimit.mul(120).div(100); // Add 20% buffer
+                        break;
+                    } catch (gasError) {
+                        gasAttempts++;
+                        console.warn(`Gas estimation attempt ${gasAttempts} failed:`, gasError);
+                        if (gasAttempts === maxGasAttempts) {
+                            gasLimit = 2000000; // Fallback to high gas limit
+                            console.warn("Using default gas limit:", gasLimit);
+                        } else {
+                            updateStatus(`Status: Gas estimation failed, retrying (${gasAttempts + 1}/${maxGasAttempts})...`, 'loading');
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
+                    }
+                }
+
+                // Log transaction details for debugging
+                console.log('Transaction details:', { attestationId, merklePath, leafCount, index, input, gasLimit });
+
+                // Notify user about transaction
+                updateStatus(`Status: Please approve the transaction in MetaMask to claim your Xmono tokens. Estimated gas: ${gasLimit.toString()} units. High gas fees are required for ZK proof verification.`, 'loading');
+
+                // Call the contract
+                const tx = await contract.verifyAndClaimXmono(
+                    attestationId,
+                    merklePath,
+                    leafCount,
+                    index,
+                    input,
+                    { gasLimit }
+                );
+                
+                updateProgress(95);
+                updateStatus('Status: Transaction sent. Waiting for confirmation...', 'loading');
+                
+                await tx.wait();
+                updateProgress(100);
+                updateStatus(`Status: Claim successful!<br>Transaction: <a href="https://sepolia.etherscan.io/tx/${tx.hash}" target="_blank" style="color: #4CAF50;">${tx.hash.substring(0, 6)}...${tx.hash.substring(tx.hash.length - 4)}</a>`, 'success');
+
+            } catch (error) {
+                console.error('Error details:', error);
+                
+                if (error.message && error.message.includes('invalid hexlify value')) {
+                    updateStatus('Status: Error - Invalid input format for leaf computation. Check public signals and console logs.', 'error');
+                } else if (error.message && error.message.includes('Signal not found')) {
+                    updateStatus('Status: Error - Invalid circuit input signals. Expected signals: funds, nextRequiredSMONO, xmonoPoints. Check console logs.', 'error');
+                } else if (error.message && error.message.includes('Invalid nextRequiredSMONO')) {
+                    updateStatus(`Status: Error - ${error.message}`, 'error');
+                } else if (error.message && error.message.includes('Merkle proof verification failed')) {
+                    updateStatus('Status: Error - Invalid Merkle proof. Check attestationId, merklePath, leafCount, or index in aggregate.json. See console logs.', 'error');
+                } else if (error.code === 'ACTION_REJECTED') {
+                    updateStatus('Status: Transaction rejected in MetaMask. Please approve the transaction to claim your Xmono tokens. Ensure you have at least 0.01 Sepolia ETH for gas fees (get more at https://sepoliafaucet.com).', 'error');
+                } else if (error.code === 'INSUFFICIENT_FUNDS') {
+                    updateStatus('Status: Error - Insufficient ETH for gas fees. Please add at least 0.01 Sepolia ETH to your wallet using a faucet like https://sepoliafaucet.com.', 'error');
+                } else if (error.code === 'CALL_EXCEPTION') {
+                    updateStatus(`Status: Error - Transaction reverted: ${error.reason || 'zkVerify contract call failed'}. Check attestation data or contract state. See console logs.`, 'error');
+                } else if (error.message && error.message.includes('gas')) {
+                    updateStatus('Status: Error - Gas estimation failed. Try adjusting the gas limit in MetaMask or retry the transaction.', 'error');
+                } else {
+                    updateStatus('Status: Error - ' + (error.reason || error.message || 'Unknown error occurred. Check console for details.'), 'error');
+                }
+                
+                updateProgress(0);
+            } finally {
+                button.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
